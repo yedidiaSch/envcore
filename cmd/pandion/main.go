@@ -283,9 +283,24 @@ func runUp(args []string) {
 
 	// multi-node path: -f cluster.yaml. A top-level `--gpu` applies as the cluster
 	// default (per-node `gpu:` in the topology overrides); GPU nodes are provisioned,
-	// hardened, and meshed like any other (M5).
+	// hardened, and meshed like any other (M5). An explicitly-passed --size/--region/
+	// --engine likewise overrides cluster.yaml's defaults.* (P2.4 precedence: flag >
+	// env > cluster.yaml > ~/.pandion/config.yaml > built-in default) — only when the
+	// flag was actually set on the command line (not merely defaulted from
+	// ~/.pandion/config.yaml by applyUpDefaults above), so cluster.yaml still beats an
+	// unset flag. A per-node override in the topology (more specific) still wins.
 	if *file != "" {
-		upCluster(o, p.Name(), *file, *id, *maxCost, *dryRun, *lock, *noRun, *gpu, *firewallAudit, *jsonOut)
+		ov := clusterFlagOverrides{}
+		if set["size"] {
+			ov.Size = *size
+		}
+		if set["region"] {
+			ov.Region = *region
+		}
+		if set["engine"] {
+			ov.Engine = *engine
+		}
+		upCluster(o, p.Name(), *file, *id, *maxCost, *dryRun, *lock, *noRun, *gpu, *firewallAudit, *jsonOut, ov)
 		return
 	}
 
@@ -361,10 +376,44 @@ type hetznerUpOpts struct {
 	noRun            bool    // deploy only: don't launch the run command (start later)
 }
 
+// clusterFlagOverrides carries the `up` flags that must win over cluster.yaml's
+// defaults.* per the documented precedence (P2.4: flag > env > cluster.yaml >
+// ~/.pandion/config.yaml > built-in default; see effective.go's resolveKnob doc
+// comment). Each field is populated only when the corresponding flag was
+// explicitly passed on the command line — a zero value here means "no override",
+// letting cluster.yaml (or its own fallback chain) decide as before.
+type clusterFlagOverrides struct {
+	Size   string // --size
+	Region string // --region (note: --region may be comma-separated; only the
+	// first preference is applied to cluster.yaml's single provider.region)
+	Engine string // --engine
+}
+
+// applyClusterFlagOverrides layers explicit `up` CLI flags on top of a loaded
+// cluster.yaml's defaults.* (P2.4: flag > env > cluster.yaml > config > default;
+// see effective.go's resolveKnob doc comment). Unlike the top-level `--gpu`
+// default (which only fills in where cluster.yaml is silent), these
+// unconditionally overwrite the cluster.yaml value because ov's fields are only
+// populated when the caller (runUp) confirmed the flag was explicitly set — not
+// merely defaulted from ~/.pandion/config.yaml by applyUpDefaults. A per-node
+// override in the topology (still more specific than a cluster-wide default) is
+// left untouched and keeps winning in config.Cluster.Effective.
+func applyClusterFlagOverrides(cl *config.Cluster, ov clusterFlagOverrides) {
+	if ov.Size != "" {
+		cl.Defaults.Size = ov.Size
+	}
+	if ov.Region != "" {
+		cl.Provider.Region = splitCSV(ov.Region)[0]
+	}
+	if ov.Engine != "" {
+		cl.Defaults.Engine = ov.Engine
+	}
+}
+
 // upCluster provisions a multi-node topology from cluster.yaml. M3.2a: mock
 // provider only (concurrent provisioning + barrier). The real Hetzner mesh path
 // (per-node hardened cloud-init + WG mesh + discovery) lands in M3.2b.
-func upCluster(o *orchestrator.Orchestrator, providerName, file, id string, maxCost float64, dryRun bool, lockPath string, noRun bool, gpuFlag string, auditFW bool, jsonOut bool) {
+func upCluster(o *orchestrator.Orchestrator, providerName, file, id string, maxCost float64, dryRun bool, lockPath string, noRun bool, gpuFlag string, auditFW bool, jsonOut bool, ov clusterFlagOverrides) {
 	cl, err := config.Load(file)
 	must(err)
 	warnUnappliedFields(file) // never silently ignore accepted-but-unapplied fields (P2.2)
@@ -376,6 +425,7 @@ func upCluster(o *orchestrator.Orchestrator, providerName, file, id string, maxC
 	if gpuFlag != "" && cl.Defaults.GPU == "" {
 		cl.Defaults.GPU = gpuFlag
 	}
+	applyClusterFlagOverrides(cl, ov)
 	// if any node ends up wanting a GPU, the provider must be GPU-capable.
 	if clusterWantsGPU(cl) {
 		if _, ok := o.P.(provider.GPUProvider); !ok {
