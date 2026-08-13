@@ -284,11 +284,12 @@ func runUp(args []string) {
 	// multi-node path: -f cluster.yaml. A top-level `--gpu` applies as the cluster
 	// default (per-node `gpu:` in the topology overrides); GPU nodes are provisioned,
 	// hardened, and meshed like any other (M5). An explicitly-passed --size/--region/
-	// --engine likewise overrides cluster.yaml's defaults.* (P2.4 precedence: flag >
-	// env > cluster.yaml > ~/.pandion/config.yaml > built-in default) — only when the
-	// flag was actually set on the command line (not merely defaulted from
-	// ~/.pandion/config.yaml by applyUpDefaults above), so cluster.yaml still beats an
-	// unset flag. A per-node override in the topology (more specific) still wins.
+	// --engine/--ttl/--no-ttl likewise overrides cluster.yaml's defaults.* (P2.4
+	// precedence: flag > env > cluster.yaml > ~/.pandion/config.yaml > built-in
+	// default) — only when the flag was actually set on the command line (not merely
+	// defaulted from ~/.pandion/config.yaml by applyUpDefaults above), so
+	// cluster.yaml still beats an unset flag. A per-node override in the topology
+	// (more specific) still wins.
 	if *file != "" {
 		ov := clusterFlagOverrides{}
 		if set["size"] {
@@ -299,6 +300,11 @@ func runUp(args []string) {
 		}
 		if set["engine"] {
 			ov.Engine = *engine
+		}
+		if *noTTL {
+			ov.TTL = "false" // parseTTL's disabled sentinel (see parseTTL)
+		} else if set["ttl"] {
+			ov.TTL = shortDur(*ttl)
 		}
 		upCluster(o, p.Name(), *file, *id, *maxCost, *dryRun, *lock, *noRun, *gpu, *firewallAudit, *jsonOut, ov)
 		return
@@ -387,6 +393,7 @@ type clusterFlagOverrides struct {
 	Region string // --region (note: --region may be comma-separated; only the
 	// first preference is applied to cluster.yaml's single provider.region)
 	Engine string // --engine
+	TTL    string // --ttl (formatted via shortDur) or "false" for --no-ttl
 }
 
 // applyClusterFlagOverrides layers explicit `up` CLI flags on top of a loaded
@@ -407,6 +414,9 @@ func applyClusterFlagOverrides(cl *config.Cluster, ov clusterFlagOverrides) {
 	}
 	if ov.Engine != "" {
 		cl.Defaults.Engine = ov.Engine
+	}
+	if ov.TTL != "" {
+		cl.Defaults.TTL = ov.TTL
 	}
 }
 

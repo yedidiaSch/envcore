@@ -79,6 +79,7 @@ func TestApplyClusterFlagOverrides(t *testing.T) {
 		wantSize   string
 		wantRegion string
 		wantEngine string
+		wantTTL    string
 	}{
 		{
 			name:       "explicit --size overrides cluster.yaml defaults.size",
@@ -113,6 +114,24 @@ func TestApplyClusterFlagOverrides(t *testing.T) {
 			wantRegion: "nbg1",
 			wantEngine: "native",
 		},
+		{
+			name:    "explicit --ttl overrides cluster.yaml defaults.ttl",
+			cl:      config.Cluster{Defaults: config.NodeCommon{TTL: "45m"}},
+			ov:      clusterFlagOverrides{TTL: "2h00m"},
+			wantTTL: "2h00m",
+		},
+		{
+			name:    "--no-ttl disables ttl regardless of cluster.yaml",
+			cl:      config.Cluster{Defaults: config.NodeCommon{TTL: "45m"}},
+			ov:      clusterFlagOverrides{TTL: "false"},
+			wantTTL: "false",
+		},
+		{
+			name:    "no ttl override leaves cluster.yaml's ttl untouched",
+			cl:      config.Cluster{Defaults: config.NodeCommon{TTL: "45m"}},
+			ov:      clusterFlagOverrides{},
+			wantTTL: "45m",
+		},
 	}
 
 	for _, tc := range tests {
@@ -127,6 +146,9 @@ func TestApplyClusterFlagOverrides(t *testing.T) {
 			}
 			if cl.Defaults.Engine != tc.wantEngine {
 				t.Errorf("Defaults.Engine = %q, want %q", cl.Defaults.Engine, tc.wantEngine)
+			}
+			if cl.Defaults.TTL != tc.wantTTL {
+				t.Errorf("Defaults.TTL = %q, want %q", cl.Defaults.TTL, tc.wantTTL)
 			}
 		})
 	}
